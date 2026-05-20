@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Supabase Table Explorer</title>
+
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css"
+  />
+
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+  />
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+
+  <style>
+    body {
+      background: #f4f6f9;
+      min-height: 100vh;
+      padding: 30px;
+      font-family: Arial, sans-serif;
+    }
+
+    .main-card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+    }
+
+    .table-list {
+      max-height: 75vh;
+      overflow-y: auto;
+      border-right: 1px solid #ddd;
+      padding-right: 12px;
+    }
+
+    .table-item {
+      padding: 12px;
+      margin-bottom: 8px;
+      border-radius: 10px;
+      cursor: pointer;
+      background: #f8f9fa;
+      transition: 0.2s;
+      border-left: 4px solid transparent;
+    }
+
+    .table-item:hover {
+      background: #e9ecef;
+    }
+
+    .table-item.active {
+      background: #dbeafe;
+      border-left-color: #0d6efd;
+      font-weight: bold;
+    }
+
+    .preview-panel {
+      min-height: 500px;
+    }
+
+    .table-responsive {
+      max-height: 70vh;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+    }
+
+    table {
+      font-size: 13px;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #212529 !important;
+      color: white !important;
+    }
+
+    .geom-badge {
+      font-size: 11px;
+    }
+
+    .loading {
+      padding: 30px;
+      text-align: center;
+    }
+
+    .small-muted {
+      font-size: 12px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+
+<div id="app" class="container-fluid">
+
+  <div class="main-card">
+
+    <div class="d-flex align-items-center mb-4">
+      <h2 class="mb-0">
+        <i class="fa-solid fa-database text-success"></i>
+        Supabase Explorer
+      </h2>
+    </div>
+
+    <div class="row mb-3">
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">
+          URL do Projeto
+        </label>
+
+        <input
+          type="text"
+          class="form-control"
+          v-model="supabaseUrl"
+          placeholder="https://seu-projeto.supabase.co"
+        >
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">
+          Anon Key
+        </label>
+
+        <input
+          type="password"
+          class="form-control"
+          v-model="supabaseKey"
+          placeholder="eyJhbGc..."
+          @keypress.enter="listarTabelas"
+        >
+      </div>
+
+    </div>
+
+    <div class="d-grid mb-4">
+      <button
+        class="btn btn-success btn-lg"
+        @click="listarTabelas"
+      >
+        <i class="fa-solid fa-plug"></i>
+        Conectar
+      </button>
+    </div>
+
+    <div v-html="statusMessage"></div>
+
+    <div v-if="connected" class="row">
+
+      <!-- TABELAS -->
+      <div class="col-md-3">
+
+        <div class="table-list">
+
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0">
+              Tabelas
+            </h5>
+
+            <span class="badge bg-success">
+              {{ tables.length }}
+            </span>
+          </div>
+
+          <div
+            v-for="table in tables"
+            :key="table"
+            class="table-item"
+            :class="{ active: activeTable === table }"
+            @click="previewTabela(table)"
+          >
+            <i class="fa-solid fa-table text-primary"></i>
+            {{ table }}
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- DADOS -->
+      <div class="col-md-9">
+
+        <div class="preview-panel">
+
+          <div v-if="!activeTable" class="alert alert-secondary">
+            Selecione uma tabela.
+          </div>
+
+          <div v-else>
+
+            <div class="d-flex justify-content-between align-items-center mb-3">
+
+              <div>
+                <h4 class="mb-1">
+                  <i class="fa-solid fa-table text-primary"></i>
+                  {{ activeTable }}
+                </h4>
+
+                <div class="small-muted">
+                  {{ tableData.length }} registros carregados
+                </div>
+              </div>
+
+              <button
+                class="btn btn-outline-primary"
+                @click="previewTabela(activeTable)"
+              >
+                <i class="fa-solid fa-rotate"></i>
+                Atualizar
+              </button>
+
+            </div>
+
+            <div v-if="loading" class="loading">
+              <div class="spinner-border text-primary"></div>
+            </div>
+
+            <div
+              v-else-if="errorMessage"
+              class="alert alert-danger"
+            >
+              {{ errorMessage }}
+            </div>
+
+            <div
+              v-else-if="tableData.length === 0"
+              class="alert alert-warning"
+            >
+              Nenhum registro encontrado.
+            </div>
+
+            <div
+              v-else
+              class="table-responsive"
+            >
+
+              <table class="table table-bordered table-hover table-sm">
+
+                <thead class="table-dark">
+                  <tr>
+                    <th
+                      v-for="column in tableColumns"
+                      :key="column"
+                    >
+                      {{ column }}
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+
+                  <tr
+                    v-for="(row, rowIndex) in tableData"
+                    :key="rowIndex"
+                  >
+
+                    <td
+                      v-for="column in tableColumns"
+                      :key="column"
+                    >
+
+                      <!-- NULL -->
+                      <template v-if="row[column] === null">
+                        <span class="text-muted">
+                          null
+                        </span>
+                      </template>
+
+                      <!-- BOOLEAN -->
+                      <template
+                        v-else-if="typeof row[column] === 'boolean'"
+                      >
+                        <span
+                          class="badge"
+                          :class="row[column] ? 'bg-success' : 'bg-secondary'"
+                        >
+                          {{ row[column] }}
+                        </span>
+                      </template>
+
+                      <!-- GEOMETRIA -->
+                      <template
+                        v-else-if="
+                          column === 'geom'
+                          && typeof row[column] === 'object'
+                          && row[column] !== null
+                        "
+                      >
+                        <span class="badge bg-info geom-badge">
+                          {{ row[column].type }}
+                        </span>
+                      </template>
+
+                      <!-- OBJETO -->
+                      <template
+                        v-else-if="typeof row[column] === 'object'"
+                      >
+                        <code>
+                          {{ JSON.stringify(row[column]).slice(0, 80) }}
+                        </code>
+                      </template>
+
+                      <!-- TEXTO -->
+                      <template v-else>
+                        {{ row[column] }}
+                      </template>
+
+                    </td>
+
+                  </tr>
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+const { createApp, ref } = Vue;
+
+createApp({
+
+  setup() {
+
+    const supabaseUrl = ref('');
+    const supabaseKey = ref('');
+
+    const tables = ref([]);
+    const activeTable = ref(null);
+
+    const tableData = ref([]);
+    const tableColumns = ref([]);
+
+    const loading = ref(false);
+
+    const connected = ref(false);
+
+    const errorMessage = ref('');
+
+    const statusMessage = ref('');
+
+    // ============================================
+    // LISTAR TABELAS
+    // ============================================
+
+    async function listarTabelas() {
+
+      connected.value = false;
+
+      tables.value = [];
+
+      statusMessage.value = `
+        <div class="alert alert-info">
+          <div class="spinner-border spinner-border-sm me-2"></div>
+          Conectando...
+        </div>
+      `;
+
+      try {
+
+        const response = await fetch(
+          `${supabaseUrl.value}/rest/v1/rpc/list_tables`,
+          {
+            method: 'POST',
+
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': supabaseKey.value,
+              'Authorization': `Bearer ${supabaseKey.value}`
+            },
+
+            body: JSON.stringify({})
+          }
+        );
+
+        if (!response.ok) {
+
+          throw new Error(
+            `HTTP ${response.status}`
+          );
+
+        }
+
+        const data = await response.json();
+
+        tables.value = data.map(
+          item => item.table_name
+        );
+
+        connected.value = true;
+
+        statusMessage.value = `
+          <div class="alert alert-success">
+            Conectado com sucesso.
+            ${tables.value.length} tabela(s) encontrada(s).
+          </div>
+        `;
+
+      } catch(err) {
+
+        statusMessage.value = `
+          <div class="alert alert-danger">
+            <strong>Erro:</strong>
+            ${err.message}
+          </div>
+        `;
+
+      }
+
+    }
+
+    // ============================================
+    // VISUALIZAR TABELA
+    // ============================================
+
+    async function previewTabela(tableName) {
+
+      activeTable.value = tableName;
+
+      loading.value = true;
+
+      errorMessage.value = '';
+
+      tableData.value = [];
+
+      tableColumns.value = [];
+
+      try {
+
+        // evita carregar geometria pesada
+        const url =
+          `${supabaseUrl.value}/rest/v1/${tableName}` +
+          `?select=*&limit=20`;
+
+        const response = await fetch(url, {
+          headers: {
+            'apikey': supabaseKey.value,
+            'Authorization': `Bearer ${supabaseKey.value}`
+          }
+        });
+
+        if (!response.ok) {
+
+          const txt = await response.text();
+
+          throw new Error(txt);
+
+        }
+
+        const data = await response.json();
+
+        tableData.value = data;
+
+        if (data.length > 0) {
+
+          tableColumns.value =
+            Object.keys(data[0]);
+
+        }
+
+      } catch(err) {
+
+        errorMessage.value = err.message;
+
+      } finally {
+
+        loading.value = false;
+
+      }
+
+    }
+
+    return {
+
+      supabaseUrl,
+      supabaseKey,
+
+      tables,
+      activeTable,
+
+      tableData,
+      tableColumns,
+
+      loading,
+      connected,
+
+      errorMessage,
+      statusMessage,
+
+      listarTabelas,
+      previewTabela
+    };
+
+  }
+
+}).mount('#app');
+</script>
+
+</body>
+</html>
